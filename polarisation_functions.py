@@ -1,11 +1,18 @@
-import os
+from __future__ import print_function
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+import os
 import math
 import sys
 
 #######################################
 ##### Get Polarisation Parameters #####
 #######################################
+
+""" This is part of a minature pipeline. Second part for analysing polarimetry
+data using IRAF. Includes calibration of instrumental polarisation of the NTTs
+EFOSC2 instrument. """
 
 def get_pol_params(folder_path):
     """ Load relevant files """
@@ -232,14 +239,22 @@ def get_pol_params(folder_path):
 
     """ Q, U, and P values in following arrays """
     q_values,u_values,p_values = pol_parameters(norm_flux_0,norm_flux_22,norm_flux_45,norm_flux_67,target_list)
-
-    """ Need to make more accurate from future measurements but it will do for now
-    (Note that the curve is for R Band measurements so could be different for other
-    filters in the optical) """
+    
+    """ Account for EFOSC2 instrumental polarisation """
     par_ang = float(input('Parallactic Angle (degrees): '))
-    curveq = 4.29118958*np.cos(np.deg2rad((2*par_ang + 81.91428479)))/100
-    curveu = -4.3095486*np.cos(np.deg2rad((2*par_ang + 170.75451418)))/100
+    wave_band = input('Wave Band [B/V/R]: ')
+    print('')
+    if wave_band == 'V':
+        func,paramq,paramu = efosc2_cal('/Users/Adam/Documents/PhD Stuff/Polarimetry Project/pv_standards.txt')
 
+    if wave_band == 'R':
+        func,paramq,paramu = efosc2_cal('/Users/Adam/Documents/PhD Stuff/Polarimetry Project/pr_standards.txt')
+
+    if wave_band == 'B':
+        func,paramq,paramu = efosc2_cal('/Users/Adam/Documents/PhD Stuff/Polarimetry Project/pb_standards.txt')
+
+    curveq = func(par_ang,*paramq)/100
+    curveu = func(par_ang,*paramu)/100
     real_q = [x - curveq for x in q_values]
     real_u = [x - curveu for x in u_values]
     real_p = []
@@ -409,15 +424,7 @@ def get_pol_params(folder_path):
         if wk_est_values[i] == '  N/A  ':
             wk_est.append(wk_est_values[i])
 
-    return(q,q_r,q_err,u,u_r,u_err,p,p_r,p_corr,p_err,theta,theta_err,eta,wk_est,target_list)
-
-##############################################
-##### Write Polarisation Results to File #####
-##############################################
-
-def params_to_file(folder_path):
-    """ Create and write to file to save the results """
-    q,q_r,q_err,u,u_r,u_err,p,p_r,p_corr,p_err,theta,theta_err,eta,wk_est,target_list = get_pol_params(folder_path)    
+    """ Write results to file """    
     orig_stdout = sys.stdout
     result_file=folder_path+'source_results.txt'
     resultf = open(result_file, "w")
@@ -442,3 +449,53 @@ def params_to_file(folder_path):
 
     sys.stdout = orig_stdout
     resultf.close()
+
+#########################################################
+##### EFOSC2 Calibration (STD Stars + Optimisation) #####
+#########################################################
+
+def efosc2_cal(standard_star_file):
+    """ Using unpolarised stars to calibrate the instrumental polarisation
+    of EFOSC2 on the NTT as a function of parallactic angle """ 
+    data = np.genfromtxt(standard_star_file,delimiter=',')
+    sourcenames = data[:,0]
+    angles = data[:,1]
+    polq = data[:,2]
+    polq_err = data[:,3]
+    polu = data[:,4]
+    polu_err = data[:,5]
+    xx = np.linspace(-200,200,200)
+
+    def func(x, p1, p2):
+        return p1*np.cos(np.deg2rad((2*x + p2))) 
+
+    paramq, pcovq = curve_fit(func, xdata=angles, ydata=polq,
+                              sigma=polq_err)
+
+    paramq_err = np.sqrt(np.diag(pcovq))
+    print('EFOSC2 PQ Instrumental Polarisation: ')
+    print("""{0}(±{1})cos(2x + {2}(±{3}))\n""".format(round(paramq[0],5),round(paramq_err[0],5),
+                                                      round(paramq[1],5),round(paramq_err[1],5)))
+
+    paramu, pcovu = curve_fit(func, xdata=angles, ydata=polu,
+                              sigma=polu_err)
+
+    paramu_err = np.sqrt(np.diag(pcovu))
+    print('EFOSC2 PU Instrumental Polarisation: ')
+    print("""{0}(±{1})cos(2x + {2}(±{3}))""".format(round(paramu[0],5),round(paramu_err[0],5),
+                                                    round(paramu[1],5),round(paramu_err[1],5)))
+
+    curveq=func(xx,*paramq)
+    curveu=func(xx,*paramu)
+    fig = plt.figure()
+    ax1 = fig.add_subplot(211)
+    ax1.set_title('Polarisation Parameters')
+    ax1.errorbar(angles,polq,yerr=polq_err,color='b',fmt='.')
+    ax1.plot(xx,curveq,'r')
+    ax1.set_ylabel('PQ (%)')
+    ax2 = fig.add_subplot(212,sharex=ax1)
+    ax2.errorbar(angles,polu,yerr=polu_err,color='b',fmt='.')
+    ax2.plot(xx,curveu,'r')
+    ax2.set_ylabel('PU (%)')
+    ax2.set_xlabel('Parallactic Angle ($^o$)')
+    return(func,paramq,paramu)

@@ -3,6 +3,7 @@ import numpy as np
 import sys
 import requests
 import os
+from scipy.stats import f
 from scipy.optimize import curve_fit
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
@@ -1136,3 +1137,42 @@ def pl3_mc(afterglow_file):
     print('Reduced Chi Squared Value = ',reduced_chi_squared)
 
     return(n,a1,xb1,a2,xb2,a3,chi_squared,dof)
+
+##############################################
+##### F-Test For Comparing Fitted Models #####
+##############################################
+
+def f_test():
+    """ Compares the best fits of two models with different numbers of
+    parameters on the same data set and calculates if the higher parameter
+    model result is statistically significant! """
+    m1_chi_sq = float(input('Chi-Squared value from first model: '))
+    p1 = float(input('Number of Parameters in first model: '))
+    m2_chi_sq = float(input('Chi-Squared value from second model: '))
+    p2 = float(input('Number of parameters in second model: '))
+    data_bins = float(input('Number of data points/bins: '))
+    null_limit = float(input('Confidence Limit (%): '))
+    alpha = 100 - null_limit
+
+    """ Calculating the F-value """
+    dof1 = p2-p1
+    dof2 = data_bins-p2
+    numer = (m1_chi_sq - m2_chi_sq)/(p2-p1)
+    denom = (m2_chi_sq)/(data_bins-p2)
+    f_value = numer/denom
+
+    """ Calculate P-value and compare to null hypothesis level of acceptance """
+    dof1 = p2-p1
+    dof2 = data_bins-p2
+    p_value = 1 - f.cdf(f_value,dof1,dof2)
+    p_value = p_value*100
+    print('\nP-value = ',p_value,'% (probability of chance improvement)')
+    if p_value >= alpha:
+        print('No significant improvement in fit!')
+    else:
+        print('Significant improvement in fit!')
+    
+    
+    
+    
+    

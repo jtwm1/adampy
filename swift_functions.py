@@ -3,18 +3,152 @@ import numpy as np
 import sys
 import requests
 import os
+import astropy.coordinates as coord
+import astropy.units as u
+from astropy.coordinates import SkyCoord
 from scipy.stats import f
 from scipy.optimize import curve_fit
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 import emcee
 
+###################################
+##### Swift Sample Properties #####
+###################################
+
+class swift_samp_props(object):
+    """ Plots distributions of various Swift GRB parameters """
+    def __init__(self):
+        """ Initialisation. Takes data from Swift database, ready to be
+        plotted etc... """
+        r = requests.get('http://swift.gsfc.nasa.gov/archive/grb_table/table.php?obs=Swift&year=All+Years&restrict=none&bat_t90=1&bat_fluence=1&xrt_ra=1&xrt_dec=1').text
+        soup = BeautifulSoup(r,'lxml')
+        table = soup.find('table')
+        rows = table.findAll('tr')
+        names = []
+        t90s = []
+        fluences = []
+        ras = []
+        decs = []
+        c = 0
+        
+        for row in rows:
+            if c >= 1:
+                cols = row.findAll('td')
+                cols = [ele.text.strip() for ele in cols]
+
+                if len(cols) == 5:
+                    names.append(str('GRB' + cols[0]))
+                    t90s.append(cols[1])
+                    fluences.append(cols[2])
+                    ras.append(cols[3])
+                    decs.append(cols[4])
+            c += 1
+            
+        self.names = names
+        self.t90s = t90s
+        self.fluences = fluences
+        self.ras = ras
+        self.decs = decs
+        print('Number of GRBs detected by Swift =',len(self.names))
+        
+    def t90_dist(self):
+        """ Plots T90 distribution, gives the mean and median T90 values of the
+        sample and calculates the number of short, long bursts in the sample """
+        t90s = []
+        for i in range(0,len(self.t90s),1):
+            try:
+                t90s.append(float(self.t90s[i]))
+
+            except ValueError:
+                continue
+
+        t90s = np.array(t90s)
+        mean_t90 = np.mean(t90s)
+        median_t90 = np.median(t90s)
+        print('Mean T90 time =',mean_t90,'s')
+        print('Median T90 time=',median_t90,'s')
+        mask = np.ma.masked_where(t90s < 2, t90s)
+        short_t90s = t90s[mask == False]
+        long_t90s = t90s[mask != False]
+        print('Number of Short/Long GRBs =',len(short_t90s),'/',len(long_t90s))
+
+        plt.figure()
+        plt.xlabel('T$_{90}$ (s)')
+        plt.ylabel('Number of GRBs')
+        plt.xscale('log')
+        minimum, maximum, = min(short_t90s), max(long_t90s)
+        plt.axvline(mean_t90,color='red',linestyle='-')
+        plt.axvline(median_t90,color='blue',linestyle='-')
+        plt.hist(t90s,bins= 10**np.linspace(np.log10(minimum),np.log10(maximum),20),color='grey',alpha=0.5)
+        plt.show()
+
+    def fluence_dist(self):
+        """ Plots the fluence distribution and gives the mean and median fluence
+        values of the sample """
+        fluences = []
+        for i in range(0,len(self.fluences),1):
+            try:
+                fluences.append(float(self.fluences[i]))
+
+            except ValueError:
+                continue
+
+        fluences = np.array(fluences)
+        mean_fluence = np.mean(fluences)
+        median_fluence = np.median(fluences)
+        print('Mean Fluence =',mean_fluence,'(15-150 keV) [10^-7 erg cm^-2]')
+        print('Median Fluence =',median_fluence,'(15-150 keV) [10^-7 erg cm^-2]')
+
+        plt.figure()
+        plt.xlabel('Fluence (15-150 keV) [$10^{-7}$ erg cm$^{-2}$]')
+        plt.ylabel('Number of GRBs')
+        plt.xscale('log')
+        minimum, maximum = min(fluences), max(fluences)
+        plt.axvline(mean_fluence,color='red',linestyle='-')
+        plt.axvline(median_fluence,color='blue',linestyle='-')
+        plt.hist(fluences,bins= 10**np.linspace(np.log10(minimum),np.log10(maximum),20),color='grey',alpha=0.5)
+        plt.show()
+        
+    def spatial_dist(self):
+        """ Converts the coordinates into landb Galactic Coordinates and plots
+        the spatial distribution of the GRB sample onto an aitoff
+        projection. """
+        ras = []
+        decs = []
+        l_coords = []
+        b_coords = []
+        for i in range(0,len(self.names),1):
+            if self.ras[i] != 'n/a':
+                ras.append(self.ras[i])
+                decs.append(self.decs[i])
+                
+        print('Number of Swift GRBs with XRT RA + Dec coords =',len(ras))
+        coords = SkyCoord(ras,decs,unit=(u.hourangle,u.deg))
+        gal_coords = coords.galactic
+        for j in range(0,len(coords),1):
+            gal_coords = coords[j].galactic    
+            l = float(gal_coords.l.degree)
+            l = coord.Angle(l*u.degree)
+            l = l.wrap_at(180*u.degree)
+            l = l.radian
+            l_coords.append(l)
+            b = float(gal_coords.b.degree)
+            b = coord.Angle(b*u.degree)
+            b = b.radian
+            b_coords.append(b)
+
+        plt.subplot(111,projection='aitoff')
+        plt.scatter(l_coords,b_coords,color='black')
+        plt.grid(True)
+        plt.show()
+
 ###################################################
 ##### Download All Swift GRB XRT Light Curves #####
 ###################################################
 
 def all_lc_data(directory):
-    """ Downloads and saves all Swift detected GRB XRT afterglow data to
+    """ Downloads and saves all Swift GRB XRT afterglow data to
     directory of your choice """
     """ This first part gets the GRB name and trigger list """
     r = requests.get('http://swift.gsfc.nasa.gov/archive/grb_table/table.php?obs=Swift&year=All+Years&restrict=none&grb_trigger=1').text

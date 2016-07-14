@@ -384,6 +384,7 @@ def get_pol_params(folder_path):
             p_corr_values[i] = str('  ???  ')
         
     p_abs = [x * 100 for x in p_abs]
+    sig_p = [x * 100 for x in sig_p]
 
     """ Round all values to 5 significant Figures for ease when looking at printed
     results (Final result arrays!) """
@@ -397,6 +398,7 @@ def get_pol_params(folder_path):
     p_r = []
     p_corr = []
     p_err = []
+    p_sigerr = []
     theta = []
     theta_err = []
     eta = []
@@ -416,6 +418,7 @@ def get_pol_params(folder_path):
         if p_corr_values[i] == '  ???  ':
             p_corr.append(p_corr_values[i])
         p_err.append(round(p_abs[i],5))
+        p_sigerr.append(round(sig_p,5))
         theta.append(round(corr_theta_values[i],5))
         theta_err.append(round(theta_errors[i],5))
         eta.append(round(eta_values[i],5))
@@ -439,7 +442,7 @@ def get_pol_params(folder_path):
     print('')
     print(' Eta    W-K Est   Pm(%)  Pr(%)  Pcorr(%) P Err(%)')
     for j in range(0,len(target_list),1):
-        print(eta[j], wk_est[j], p[j], p_r[j], p_corr[j], p_err[j])
+        print(eta[j], wk_est[j], p[j], p_r[j], p_corr[j], p_sigerr[j])
     print('')
     print(' Ang    Ang Err')
     for k in range(0,len(target_list),1):

@@ -3,14 +3,91 @@ import numpy as np
 import sys
 import requests
 import os
-import astropy.coordinates as coord
-import astropy.units as u
-from astropy.coordinates import SkyCoord
+import urllib
+import wget
 from scipy.stats import f
-from scipy.optimize import curve_fit
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 import emcee
+
+#######################################
+##### Get relevant GRB Table Info #####
+#######################################
+
+def swift_table_info():
+    """ Retrieves Swift GRB table info from GSFC Table (most complete table)"""
+    r = requests.get('http://swift.gsfc.nasa.gov/archive/grb_table/table.php?obs=Swift&year=All+Years&restrict=none&grb_trigger=1&bat_t90=1&bat_fluence=1').text
+    soup = BeautifulSoup(r,'lxml')
+    table = soup.find('table')
+    rows = table.findAll('tr')
+    grb_names = []
+    trigger_nos = []
+    t90s = []
+    fluences = []
+    c = 0
+
+    for row in rows:
+    
+        if c >= 1:
+            cols = row.findAll('td')
+            cols = [ele.text.strip() for ele in cols]
+
+            if len(cols) == 4:
+                grb_name = cols[0]            
+                trigger_no = cols[1]
+                t90s.append(cols[2])
+                fluences.append(cols[3])
+
+                if len(trigger_no) == 6:
+                    grb_names.append(grb_name)
+                    trigger_nos.append(trigger_no)
+
+                if len(trigger_no) == 7:
+                    grb_names.append(grb_name)
+                    trigger_no = str(trigger_no)[0:6]
+                    trigger_nos.append(trigger_no)
+                    
+                if len(trigger_no) == 26:
+                    grb_names.append(grb_name)
+                    trigger_no = str(trigger_no)[21:26]
+                    trigger_nos.append(trigger_no)
+
+                if len(trigger_no) == 21:
+                    grb_names.append(grb_name)
+                    
+                    if str(trigger_no)[0] == 'G':
+                        trigger_no = str(trigger_no)[15:21]
+                        trigger_nos.append(trigger_no)
+
+                    else:
+                        trigger_no = str(trigger_no)[0:6]
+                        trigger_nos.append(trigger_no)
+
+                if len(trigger_no) == 12:
+                    grb_names.append(grb_name)
+                    trigger_no = str(trigger_no)[6:12]
+                    trigger_nos.append(trigger_no)
+                
+                if len(trigger_no) == 20:
+                    grb_names.append(grb_name)
+                    trigger_no = str(trigger_no)[15:20]
+                    trigger_nos.append(trigger_no)
+
+                if len(trigger_no) == 32:
+                    grb_names.append(grb_name)
+                    trigger_no = str(trigger_no)[27:32]
+                    trigger_nos.append(trigger_no)
+
+                if trigger_no == 'BATSS':
+                    grb_names.append(grb_name)
+                    trigger_nos.append(trigger_no)
+
+                if trigger_no == 'Ground Analysis':
+                    grb_names.append(grb_name)
+                    trigger_nos.append(trigger_no)
+        c += 1
+        
+    return(grb_names,trigger_nos,t90s,fluences)
 
 ###################################
 ##### Swift Sample Properties #####
@@ -21,35 +98,11 @@ class swift_samp_props(object):
     def __init__(self):
         """ Initialisation. Takes data from Swift database, ready to be
         plotted etc... """
-        r = requests.get('http://swift.gsfc.nasa.gov/archive/grb_table/table.php?obs=Swift&year=All+Years&restrict=none&bat_t90=1&bat_fluence=1&xrt_ra=1&xrt_dec=1').text
-        soup = BeautifulSoup(r,'lxml')
-        table = soup.find('table')
-        rows = table.findAll('tr')
-        names = []
-        t90s = []
-        fluences = []
-        ras = []
-        decs = []
-        c = 0
-        
-        for row in rows:
-            if c >= 1:
-                cols = row.findAll('td')
-                cols = [ele.text.strip() for ele in cols]
-
-                if len(cols) == 5:
-                    names.append(str('GRB' + cols[0]))
-                    t90s.append(cols[1])
-                    fluences.append(cols[2])
-                    ras.append(cols[3])
-                    decs.append(cols[4])
-            c += 1
-            
-        self.names = names
+        grb_names,trigger_nos,t90s,fluences = swift_table_info()
+        self.names = grb_names    
+        self.trigger_nos = trigger_nos
         self.t90s = t90s
         self.fluences = fluences
-        self.ras = ras
-        self.decs = decs
         print('Number of GRBs detected by Swift =',len(self.names))
         
     def t90_dist(self):
@@ -109,146 +162,51 @@ class swift_samp_props(object):
         plt.axvline(median_fluence,color='blue',linestyle='-')
         plt.hist(fluences,bins= 10**np.linspace(np.log10(minimum),np.log10(maximum),20),color='grey',alpha=0.5)
         plt.show()
-        
-    def spatial_dist(self):
-        """ Converts the coordinates into landb Galactic Coordinates and plots
-        the spatial distribution of the GRB sample onto an aitoff
-        projection. """
-        ras = []
-        decs = []
-        l_coords = []
-        b_coords = []
-        for i in range(0,len(self.names),1):
-            if self.ras[i] != 'n/a':
-                ras.append(self.ras[i])
-                decs.append(self.decs[i])
-                
-        print('Number of Swift GRBs with XRT RA + Dec coords =',len(ras))
-        coords = SkyCoord(ras,decs,unit=(u.hourangle,u.deg))
-        gal_coords = coords.galactic
-        for j in range(0,len(coords),1):
-            gal_coords = coords[j].galactic    
-            l = float(gal_coords.l.degree)
-            l = coord.Angle(l*u.degree)
-            l = l.wrap_at(180*u.degree)
-            l = l.radian
-            l_coords.append(l)
-            b = float(gal_coords.b.degree)
-            b = coord.Angle(b*u.degree)
-            b = b.radian
-            b_coords.append(b)
-
-        plt.subplot(111,projection='aitoff')
-        plt.scatter(l_coords,b_coords,color='black')
-        plt.grid(True)
-        plt.show()
 
 ###################################################
 ##### Download All Swift GRB XRT Light Curves #####
 ###################################################
 
 def all_lc_data(directory):
-    """ Downloads and saves all Swift GRB XRT afterglow data to
-    directory of your choice """
-    """ This first part gets the GRB name and trigger list """
-    r = requests.get('http://swift.gsfc.nasa.gov/archive/grb_table/table.php?obs=Swift&year=All+Years&restrict=none&grb_trigger=1').text
-    soup = BeautifulSoup(r,'lxml')
-    table = soup.find('table')
-    rows = table.findAll('tr')
-    grb_names = []
-    trigger_nos = []
-    c = 0
-
-    for row in rows:
-    
-        if c >= 1:
-            cols = row.findAll('td')
-            cols = [ele.text.strip() for ele in cols]
-
-            if len(cols) == 2:
-                grb_name = cols[0]            
-                trigger_no = cols[1]
-
-                if len(trigger_no) == 6:
-                    grb_names.append(grb_name)
-                    trigger_nos.append(trigger_no)
-                    
-                if len(trigger_no) == 26:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[21:26]
-                    trigger_nos.append(trigger_no)
-
-                if len(trigger_no) == 21:
-                    grb_names.append(grb_name)
-                    
-                    if str(trigger_no)[0] == 'G':
-                        trigger_no = str(trigger_no)[15:21]
-                        trigger_nos.append(trigger_no)
-
-                    else:
-                        trigger_no = str(trigger_no)[0:6]
-                        trigger_nos.append(trigger_no)
-
-                if len(trigger_no) == 12:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[6:12]
-                    trigger_nos.append(trigger_no)
-                
-                if len(trigger_no) == 20:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[15:20]
-                    trigger_nos.append(trigger_no)
-
-                if len(trigger_no) == 32:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[27:32]
-                    trigger_nos.append(trigger_no)
-
-                if trigger_no == 'BATSS':
-                    grb_names.append(grb_name)
-                    trigger_nos.append(trigger_no)
-
-                if trigger_no == 'Ground Analysis':
-                    grb_names.append(grb_name)
-                    trigger_nos.append(trigger_no)
-        c += 1
-    
-    """ Downloads all available data if it isn't already downloaded """  
+    """ Downloads all available data into the directory if it isn't already
+    downloaded and changes file name to GRB name instead of 'curve.qdp' """
+    """ Have to deal with Swift page for incorrect numerical trigger numbers
+    that do not flag a 404 error! (-.-) """
+    grb_names,trigger_nos,t90s,fluences = swift_table_info()
+    os.chdir(directory)
     for i in range(0,len(trigger_nos),1):
-        lines = []
         d = 0
-    
         if len(trigger_nos[i]) >= 6:
             xray_lc_data_url = 'http://www.swift.ac.uk/xrt_curves/00' + trigger_nos[i] + '/curve.qdp'
 
         if len(trigger_nos[i]) == 5:
             xray_lc_data_url = 'http://www.swift.ac.uk/xrt_curves/000' + trigger_nos[i] + '/curve.qdp'
-
-        xray_lc_file = directory + 'GRB' + grb_names[i] + '.qdp'
-
+            
+        xray_lc_file = 'GRB' + grb_names[i] + '_lc.qdp'
         if os.path.exists(xray_lc_file):
             print('Already have XRT afterglow data for GRB', grb_names[i])
         
         else:  
-            r2 = requests.get(xray_lc_data_url).text
-            for line in r2.split('\n'):
-                lines.append(line)
-                d += 1
-            
-            if lines[0] == '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">':
-                print('Cannot find XRT afterglow Data for GRB', grb_names[i])
+            try:
+                filename = wget.download(xray_lc_data_url)
+                lines = []
+                with open(filename,'r') as myfile:
+                    for line in myfile:
+                        lines.append(line.strip())
+                        
+                myfile.close()
+                        
+                if lines[0] != '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">':
+                    os.renames(filename,xray_lc_file)
+                    print('Retrieved XRT afterglow data for GRB', grb_names[i])
+                                                
+                else:                       
+                    os.remove(filename)
+                    print('Cannot find XRT afterglow data for GRB', grb_names[i])
 
-            else:
-                orig_stdout = sys.stdout 
-                xray_lc_out = open(xray_lc_file, "w")
-                sys.stdout = xray_lc_out
-                for j in range(0,len(lines),1):
-                    if lines[j] != '':
-                        print(lines[j])
-
-                sys.stdout = orig_stdout
-                xray_lc_out.close()
-                print('Retrieved afterglow data for GRB', grb_names[i])
+            except urllib.error.HTTPError as err:
+                print('Cannot find XRT afterglow data for GRB', grb_names[i])
+                continue
 
 #########################################
 ##### X-Ray Afterglow File Plotting #####
@@ -448,107 +406,45 @@ def xray_afterglow_plot(afterglow_file):
 #####################################################
 
 def all_hr_data(directory):
-    """ Downloads and saves all Swift detected GRB XRT hardness data to
-    directory of your choice """
-    """ This first part gets the GRB name and trigger list """
-    r = requests.get('http://swift.gsfc.nasa.gov/archive/grb_table/table.php?obs=Swift&year=All+Years&restrict=none&grb_trigger=1').text
-    soup = BeautifulSoup(r,'lxml')
-    table = soup.find('table')
-    rows = table.findAll('tr')
-    grb_names = []
-    trigger_nos = []
-    c = 0
-
-    for row in rows:
-    
-        if c >= 1:
-            cols = row.findAll('td')
-            cols = [ele.text.strip() for ele in cols]
-
-            if len(cols) == 2:
-                grb_name = cols[0]            
-                trigger_no = cols[1]
-                
-                if len(trigger_no) == 6:
-                    grb_names.append(grb_name)
-                    trigger_nos.append(trigger_no)
-                    
-                if len(trigger_no) == 26:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[21:26]
-                    trigger_nos.append(trigger_no)
-
-                if len(trigger_no) == 21:
-                    grb_names.append(grb_name)
-                    
-                    if str(trigger_no)[0] == 'G':
-                        trigger_no = str(trigger_no)[15:21]
-                        trigger_nos.append(trigger_no)
-
-                    else:
-                        trigger_no = str(trigger_no)[0:6]
-                        trigger_nos.append(trigger_no)
-
-                if len(trigger_no) == 12:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[6:12]
-                    trigger_nos.append(trigger_no)
-                
-                if len(trigger_no) == 20:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[15:20]
-                    trigger_nos.append(trigger_no)
-
-                if len(trigger_no) == 32:
-                    grb_names.append(grb_name)
-                    trigger_no = str(trigger_no)[27:32]
-                    trigger_nos.append(trigger_no)
-
-                if trigger_no == 'BATSS':
-                    grb_names.append(grb_name)
-                    trigger_nos.append(trigger_no)
-
-                if trigger_no == 'Ground Analysis':
-                    grb_names.append(grb_name)
-                    trigger_nos.append(trigger_no)
-        c += 1
-        
-    """ Downloads all available data if it isn't already downloaded """ 
+    """ Downloads all available data into the directory if it isn't already
+    downloaded and changes file name to GRB name instead of 'curve.qdp' """
+    """ Have to deal with Swift page for incorrect numerical trigger numbers
+    that do not flag a 404 error! (-.-) """
+    grb_names,trigger_nos,t90s,fluences = swift_table_info()
+    os.chdir(directory)
     for i in range(0,len(trigger_nos),1):
-        lines = []
         d = 0
-    
         if len(trigger_nos[i]) >= 6:
             xray_hr_data_url = 'http://www.swift.ac.uk/xrt_curves/00' + trigger_nos[i] + '/hardrat.qdp'
 
         if len(trigger_nos[i]) == 5:
             xray_hr_data_url = 'http://www.swift.ac.uk/xrt_curves/000' + trigger_nos[i] + '/hardrat.qdp'
-
-        xray_hr_file = directory + 'GRB' + grb_names[i] + '.qdp'
-
+            
+        xray_hr_file = 'GRB' + grb_names[i] + '_hr.qdp'
         if os.path.exists(xray_hr_file):
-            print('Already have XRT Hardness data for GRB', grb_names[i])
+            print('Already have XRT hardness data for GRB', grb_names[i])
         
         else:  
-            r = requests.get(xray_hr_data_url).text
-            for line in r.split('\n'):
-                lines.append(line)
-                d += 1
-            
-            if lines[0] == '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">':
-                print('Cannot find XRT Hardness Data for GRB', grb_names[i])
+            try:
+                filename = wget.download(xray_hr_data_url)
+                lines = []
+                with open(filename,'r') as myfile:
+                    for line in myfile:
+                        lines.append(line.strip())
+                        
+                myfile.close()
+                        
+                if lines[0] != '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">':
+                    os.renames(filename,xray_hr_file)
+                    print('Retrieved XRT hardness data for GRB', grb_names[i])
+                                                
+                else:                       
+                    os.remove(filename)
+                    print('Cannot find XRT hardness data for GRB', grb_names[i])
 
-            else:
-                orig_stdout = sys.stdout 
-                xray_hr_out = open(xray_hr_file, "w")
-                sys.stdout = xray_hr_out
-                for j in range(0,len(lines),1):
-                    if lines[j] != '':
-                        print(lines[j])
-
-                sys.stdout = orig_stdout
-                xray_hr_out.close()
-                print('Retrieved hardness data for GRB', grb_names[i])
+            except urllib.error.HTTPError as err:
+                print('Cannot find XRT hardness data for GRB', grb_names[i])
+                continue
 
 ########################################
 ##### X-ray Hardness File Plotting #####
@@ -900,377 +796,283 @@ def xray_hardness_plot(hardness_file):
            time_soft,timepos_soft,timeneg_soft,rate_soft,ratepos_soft,rateneg_soft,
            time_ratio,timepos_ratio,timeneg_ratio,rate_ratio,ratepos_ratio,rateneg_ratio)
 
-############################################
-##### Refine Afterglow Data for Models #####
-############################################
+####################################
+##### Light Curve MCMC Fitting #####
+####################################
 
-def refine_afterglow_data(afterglow_file):
-    """ Takes afterglow file data and removes any flaring (manually) so the
-    data can be used to fit decay models """
-    time,timepos,timeneg,rate,ratepos,rateneg = xray_afterglow_plot(afterglow_file)
-    time_min = 0
-    time_max = len(time) - 1
-    rateerr = (ratepos+rateneg)/2
-    
-    """ Ask if there is any flaring present """
-    flaring = float(input('How many flares are present? '))
-
-    if flaring >= 1:
-        time_fstart1 = float(input('\nTime first flaring started: '))
-        time_fstop1 = float(input('Time first flaring stopped: '))
-
-        flare_mask1 = np.ma.masked_inside(time,time_fstart1,time_fstop1)
-        time = time[flare_mask1 != False]
-        rate = rate[flare_mask1 != False]
+class lc_fitting(object):
+    """ Fitting XRT lightcurves using MCMC from emcee python module """
+    def __init__(self,afterglow_file):
+        """ Takes afterglow file data and removes any flaring (manually) so the
+        data can be used to fit decay models """
+        time,timepos,timeneg,rate,ratepos,rateneg = xray_afterglow_plot(afterglow_file)
         time_min = 0
         time_max = len(time) - 1
-        rateerr = rateerr[flare_mask1 != False]
-        plt.axvline(time_fstart1,color='grey')
-        plt.axvline(time_fstop1,color='grey')
-        plt.axvspan(time_fstart1,time_fstop1,alpha=0.5,color='grey')
+        rateerr = (ratepos+rateneg)/2
+    
+        """ Ask if there is any flaring present """
+        flaring = float(input('How many flares are present? '))
 
-        if flaring >= 2:
-            time_fstart2 = float(input('\nTime second flaring started: '))
-            time_fstop2 = float(input('Time second flaring stopped: '))
+        if flaring >= 1:
+            time_fstart1 = float(input('\nTime first flaring started: '))
+            time_fstop1 = float(input('Time first flaring stopped: '))
 
-            flare_mask2 = np.ma.masked_inside(time,time_fstart2,time_fstop2)
-            time = time[flare_mask2 != False]
-            rate = rate[flare_mask2 != False]
+            flare_mask1 = np.ma.masked_inside(time,time_fstart1,time_fstop1)
+            time = time[flare_mask1 != False]
+            rate = rate[flare_mask1 != False]
             time_min = 0
             time_max = len(time) - 1
-            rateerr = rateerr[flare_mask2 != False]
-            plt.axvline(time_fstart2,color='grey')
-            plt.axvline(time_fstop2,color='grey')
-            plt.axvspan(time_fstart2,time_fstop2,alpha=0.5,color='grey')
+            rateerr = rateerr[flare_mask1 != False]
+            plt.axvline(time_fstart1,color='grey')
+            plt.axvline(time_fstop1,color='grey')
+            plt.axvspan(time_fstart1,time_fstop1,alpha=0.5,color='grey')
 
-            if flaring >= 3:
-                time_fstart3 = float(input('\nTime third flaring started: '))
-                time_fstop3 = float(input('Time third flaring stopped: '))
+            if flaring >= 2:
+                time_fstart2 = float(input('\nTime second flaring started: '))
+                time_fstop2 = float(input('Time second flaring stopped: '))
 
-                flare_mask3 = np.ma.masked_inside(time,time_fstart3,time_fstop3)
-                time = time[flare_mask3 != False]
-                rate = rate[flare_mask3 != False]
+                flare_mask2 = np.ma.masked_inside(time,time_fstart2,time_fstop2)
+                time = time[flare_mask2 != False]
+                rate = rate[flare_mask2 != False]
                 time_min = 0
                 time_max = len(time) - 1
-                rateerr = rateerr[flare_mask3 != False]
-                plt.axvline(time_fstart3,color='grey')
-                plt.axvline(time_fstop3,color='grey')
-                plt.axvspan(time_fstart3,time_fstop3,alpha=0.5,color='grey')
+                rateerr = rateerr[flare_mask2 != False]
+                plt.axvline(time_fstart2,color='grey')
+                plt.axvline(time_fstop2,color='grey')
+                plt.axvspan(time_fstart2,time_fstop2,alpha=0.5,color='grey')
+
+                if flaring >= 3:
+                    time_fstart3 = float(input('\nTime third flaring started: '))
+                    time_fstop3 = float(input('Time third flaring stopped: '))
+
+                    flare_mask3 = np.ma.masked_inside(time,time_fstart3,time_fstop3)
+                    time = time[flare_mask3 != False]
+                    rate = rate[flare_mask3 != False]
+                    time_min = 0
+                    time_max = len(time) - 1
+                    rateerr = rateerr[flare_mask3 != False]
+                    plt.axvline(time_fstart3,color='grey')
+                    plt.axvline(time_fstop3,color='grey')
+                    plt.axvspan(time_fstart3,time_fstop3,alpha=0.5,color='grey')
                 
-    return(time,rate,rateerr,time_min,time_max)
+        self.time = time
+        self.rate = rate
+        self.rateerr = rateerr
+        self.time_min = time_min
+        self.time_max = time_max
 
-##################################
-##### Choose Power Law Model #####
-##################################
+    def pl1(self):
+        """ Takes the data from refined afterglow data and runs a Markov-Chain Monte
+        Carlo to find the parameters of the fit and plots the data. It also
+        removes any flaring if necessary """
+        x = self.time
+        y = self.rate
+        yerr = self.rateerr
 
-def choose_model():
-    breaks = float(input('\nHow many breaks in the afterglow decay? '))
-    power_laws = breaks + 1
-    print('\nPlease input initial estimated parameters:')
-    
-    if power_laws == 1:
-        def func(x,n,a):
-            return n * (x**a)
+        """ Give initial parameters """
+        norm = float(input('Norm: '))
+        slope = float(input('Slope: '))
 
-        n = float(input('Norm: '))
-        a = float(input('Slope: '))
-        guess = [n,a]
-        param_names = ['norm','a']
-        
-    if power_laws == 2:
-        def func(x,n,a1,xb,a2):
-            return n * ((x**a1)*(x<=xb) + ((xb**(a1-a2))*(x**a2))*(x>xb))
-
-        n = float(input('Norm: '))
-        a1 = float(input('First Slope: '))
-        xb = float(input('Time Break: '))
-        a2 = float(input('Second Slope: '))
-        guess = [n,a1,xb,a2]
-        param_names = ['norm','a1','tb1','a2']
-        
-    if power_laws == 3:    
-        def func(x,n,a1,xb1,a2,xb2,a3):
-            return n * (((x**a1)*(x<=xb1)) + ((xb1**(a1-a2))*(x**a2)*(x>xb1)*(x<xb2)) + ((xb1**(a1-a2))*(xb2**(a2-a3))*(x**a3)*(x>=xb2)))
-
-        n = float(input('Norm: '))
-        a1 = float(input('First Slope: '))
-        xb1 = float(input('First Time Break: '))
-        a2 = float(input('Second Slope: '))
-        xb2 = float(input('Second Time Break: '))
-        a3 = float(input('Third Slope: '))
-        guess = [n,a1,xb1,a2,xb2,a3]
-        param_names = ['norm','a1','tb1','a2','tb2','a3']
-        
-    return(func,guess,param_names)
-      
-############################################
-##### Scipy Optimize Power Law Fitting #####
-############################################
-
-def decay_fitting(afterglow_file):
-    """ Takes the data from refined afterglow data, chooses a power law model,
-    optimises the parameters using scipy curve fit and plots the data. It also
-    removes any flaring if necessary """
-    time,rate,rateerr,time_min,time_max = refine_afterglow_data(afterglow_file)
-            
-    """ Choose a power law with initial parameters and fit and optimize
-    the curve (least squares) """
-    func,guess,param_names = choose_model()   
-    params, pcov = curve_fit(func,xdata=time,ydata=rate,p0=guess,
-                            sigma=rateerr)
-    
-    perrs = np.sqrt(np.diag(pcov))
-
-    """ Calculate Chi Squared Value for Model """
-    dof = (len(time) - len(params))
-    chi_squared = np.sum((func(time,*params) - rate)**2/rate)
-    reduced_chi_squared = chi_squared/dof
-    
-    """ Plot the data and model using matplotlib """
-    x = np.linspace(time[time_min],time[time_max],10000)
-    modely = func(x,*params)
-    plt.plot(x,modely,color='black',zorder=2)
-    print('')
-
-    for i in range(0,len(params)):
-        print("""{0} = {1} (± {2})""".format(param_names[i],params[i],perrs[i]))
-    
-    print('\nChi Squared Value = ',chi_squared)
-    print('Degrees of Freedom = ',dof)
-    print('Reduced Chi Squared Value = ',reduced_chi_squared)
-    
-    return(params,perrs,chi_squared,dof)
-
-#########################################
-##### Single Power Law MCMC fitting #####
-#########################################
-
-def pl1_mc(afterglow_file):
-    """ Takes the data from refined afterglow data and runs a Markov-Chain Monte
-    Carlo to find the parameters of the fit and plots the data. It also
-    removes any flaring if necessary """
-    time,rate,rateerr,time_min,time_max = refine_afterglow_data(afterglow_file)
-    x = time
-    y = rate
-    yerr = rateerr
-
-    """ Give initial parameters """
-    norm = float(input('Norm: '))
-    slope = float(input('Slope: '))
-
-    def prior(p):
-        """ Define boundaries that the walkers should not leave """
-        n, a = p
-        if -10 < a < 10 and n > 0:
-            return 0.0
-        return -np.inf
-
-    def err_func(p, x, y, yerr):
-        """ Log-likelihood normal distribution function """
-        n, a = p
-        model = n * (x**a)
-        sigma = yerr
-        return -0.5*((np.sum((((y-model)/sigma)**2) + np.log(sigma**2))) + len(y)*np.log(2*np.pi))
-    
-    def prob(p, x, y, yerr):
-        """ Probability function for MCMC """
-        pr = prior(p)
-        if not np.isfinite(pr):
+        def prior(p):
+            """ Define boundaries that the walkers should not leave """
+            n, a = p
+            if -10 < a < 10 and n > 0:
+                return 0.0
             return -np.inf
-        return pr + err_func(p, x, y, yerr)
 
-    """ Set up sampler and run the MCMC. Remove burn in period and
-    flatten samples array """
-    guess = [norm,slope]
-    nwalkers, ndim, nsteps = 100, 2, 10000
-    p0 = [guess+(0.01*np.random.randn(ndim)) for i in range(nwalkers)]
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, prob, args=(x, y, yerr))
-
-    print('Running MCMC...')
-    sampler.run_mcmc(p0, nsteps)
-    print('MCMC Done!\n')
-    samples = sampler.chain[:, 50:, :].reshape((-1, ndim))
-
-    """ Print results and uncretainties (16-84 quartile) """
-    n, a = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                             zip(*np.percentile(samples, [16, 50, 84],
-                                                axis=0)))
-    print('norm = ',n[0],'(+',n[1],'-',n[2],')')
-    print('a = ',a[0],'(+',a[1],'-',a[2],')')
-
-    """ Plot Optimised Model over Data """
-    xx = np.linspace(x[time_min],x[time_max],10000)
-    ymod = n[0]*(xx**a[0])
-    plt.plot(xx,ymod,color='black')
-
-    """ Calculate and print Chi-squared values """
-    dof = (len(x) - ndim)
-    chi_squared = np.sum(((n[0]*(x**a[0])) - y)**2/y)
-    reduced_chi_squared = chi_squared/dof
+        def err_func(p, x, y, yerr):
+            """ Log-likelihood normal distribution function """
+            n, a = p
+            model = n * (x**a)
+            sigma = yerr
+            return -0.5*((np.sum((((y-model)/sigma)**2) + np.log(sigma**2))) + len(y)*np.log(2*np.pi))
     
-    print('\nChi Squared Value = ',chi_squared)
-    print('Degrees of Freedom = ',dof)
-    print('Reduced Chi Squared Value = ',reduced_chi_squared)
+        def prob(p, x, y, yerr):
+            """ Probability function for MCMC """
+            pr = prior(p)
+            if not np.isfinite(pr):
+                return -np.inf
+            return pr + err_func(p, x, y, yerr)
 
-    return(n,a,chi_squared,dof)
+        """ Set up sampler and run the MCMC. Remove burn in period and
+        flatten samples array """
+        guess = [norm,slope]
+        nwalkers, ndim, nsteps = 100, 2, 10000
+        p0 = [guess+(0.01*np.random.randn(ndim)) for i in range(nwalkers)]
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, prob, args=(x, y, yerr))
 
-#########################################
-##### Broken Power Law MCMC fitting #####
-#########################################
+        print('Running MCMC...')
+        sampler.run_mcmc(p0, nsteps)
+        print('MCMC Done!\n')
+        samples = sampler.chain[:, 50:, :].reshape((-1, ndim))
 
-def pl2_mc(afterglow_file):
-    """ Takes the data from refined afterglow data and runs a Markov-Chain Monte
-    Carlo to find the parameters of the fit and plots the data. It also
-    removes any flaring if necessary """
-    time,rate,rateerr,time_min,time_max = refine_afterglow_data(afterglow_file)
-    x = time
-    y = rate
-    yerr = rateerr
+        """ Print results and uncretainties (16-84 quartile) """
+        n, a = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                   zip(*np.percentile(samples, [16, 50, 84],axis=0)))
+        print('norm = ',n[0],'(+',n[1],'-',n[2],')')
+        print('a = ',a[0],'(+',a[1],'-',a[2],')')
 
-    """ Give initial parameters """
-    norm = float(input('Norm: '))
-    slope1 = float(input('First Slope: '))
-    breakpoint = float(input('Breakpoint: '))
-    slope2 = float(input('Second Slope: '))
+        """ Plot Optimised Model over Data """
+        xx = np.linspace(x[self.time_min],x[self.time_max],10000)
+        ymod = n[0]*(xx**a[0])
+        plt.plot(xx,ymod,color='black')
 
-    def prior(p):
-        """ Define boundaries that the walkers should not leave """
-        n, a1, xb, a2 = p
-        if n > 0 and -7 < a1 < 1 and -7 < a2 < 1 and xb > 0:
-            return 0.0
-        return -np.inf
-
-    def err_func(p, x, y, yerr):
-        """ Log-likelihood normal distribution function """
-        n, a1, xb, a2 = p
-        model = n * ((x**a1)*(x<=xb) + ((xb**(a1-a2))*(x**a2))*(x>xb))
-        sigma = yerr
-        return -0.5*((np.sum((((y-model)/sigma)**2) + np.log(sigma**2))) + len(y)*np.log(2*np.pi))
+        """ Calculate and print Chi-squared values """
+        dof = (len(x) - ndim)
+        chi_squared = np.sum(((n[0]*(x**a[0])) - y)**2/y)
+        reduced_chi_squared = chi_squared/dof
     
-    def prob(p, x, y, yerr):
-        """ Probability function for MCMC """
-        pr = prior(p)
-        if not np.isfinite(pr):
+        print('\nChi Squared Value = ',chi_squared)
+        print('Degrees of Freedom = ',dof)
+        print('Reduced Chi Squared Value = ',reduced_chi_squared)
+
+        return(n,a,chi_squared,dof)
+
+    def pl2(self):
+        """ Takes the data from refined afterglow data and runs a Markov-Chain Monte
+        Carlo to find the parameters of the fit and plots the data. It also
+        removes any flaring if necessary """
+        x = self.time
+        y = self.rate
+        yerr = self.rateerr
+
+        """ Give initial parameters """
+        norm = float(input('Norm: '))
+        slope1 = float(input('First Slope: '))
+        breakpoint = float(input('Breakpoint: '))
+        slope2 = float(input('Second Slope: '))
+
+        def prior(p):
+            """ Define boundaries that the walkers should not leave """
+            n, a1, xb, a2 = p
+            if n > 0 and -7 < a1 < 1 and -7 < a2 < 1 and xb > 0:
+                return 0.0
             return -np.inf
-        return pr + err_func(p, x, y, yerr)
 
-    """ Set up sampler and run the MCMC. Remove burn in period and
-    flatten samples array """
-    guess = [norm,slope1,breakpoint,slope2]
-    nwalkers, ndim, nsteps = 100, 4, 10000
-    p0 = [guess+(0.01*np.random.randn(ndim)) for i in range(nwalkers)]
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, prob, args=(x, y, yerr))
+        def err_func(p, x, y, yerr):
+            """ Log-likelihood normal distribution function """
+            n, a1, xb, a2 = p
+            model = n * ((x**a1)*(x<=xb) + ((xb**(a1-a2))*(x**a2))*(x>xb))
+            sigma = yerr
+            return -0.5*((np.sum((((y-model)/sigma)**2) + np.log(sigma**2))) + len(y)*np.log(2*np.pi))
+    
+        def prob(p, x, y, yerr):
+            """ Probability function for MCMC """
+            pr = prior(p)
+            if not np.isfinite(pr):
+                return -np.inf
+            return pr + err_func(p, x, y, yerr)
 
-    print('Running MCMC...')
-    sampler.run_mcmc(p0, nsteps)
-    print('MCMC Done!\n')
-    samples = sampler.chain[:, 50:, :].reshape((-1, ndim))
+        """ Set up sampler and run the MCMC. Remove burn in period and
+        flatten samples array """
+        guess = [norm,slope1,breakpoint,slope2]
+        nwalkers, ndim, nsteps = 100, 4, 10000
+        p0 = [guess+(0.01*np.random.randn(ndim)) for i in range(nwalkers)]
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, prob, args=(x, y, yerr))
 
-    """ Print results and uncretainties (16-84 quartile) """
-    n, a1, xb, a2 = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                             zip(*np.percentile(samples, [16, 50, 84],
-                                                axis=0)))
-    print('norm = ',n[0],'(+',n[1],'-',n[2],')')
-    print('a1 = ',a1[0],'(+',a1[1],'-',a1[2],')')
-    print('xb = ',xb[0],'(+',xb[1],'-',xb[2],')')
-    print('a2 = ',a2[0],'(+',a2[1],'-',a2[2],')')
+        print('Running MCMC...')
+        sampler.run_mcmc(p0, nsteps)
+        print('MCMC Done!\n')
+        samples = sampler.chain[:, 50:, :].reshape((-1, ndim))
 
-    """ Plot Optimised Model over Data """
-    xx = np.linspace(time[time_min],time[time_max],10000)
-    ymod = n[0] * ((xx**a1[0])*(xx<=xb[0]) + (xb[0]**(a1[0]-a2[0])*(xx**a2[0])*(xx>xb[0])))
-    plt.plot(xx,ymod,color='black')
+        """ Print results and uncretainties (16-84 quartile) """
+        n, a1, xb, a2 = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                            zip(*np.percentile(samples, [16, 50, 84],axis=0)))
+        print('norm = ',n[0],'(+',n[1],'-',n[2],')')
+        print('a1 = ',a1[0],'(+',a1[1],'-',a1[2],')')
+        print('xb = ',xb[0],'(+',xb[1],'-',xb[2],')')
+        print('a2 = ',a2[0],'(+',a2[1],'-',a2[2],')')
 
-    """ Calculate and print Chi-squared values """
-    dof = (len(time) - ndim)
-    chi_squared = np.sum(((n[0] * ((x**a1[0])*(x<=xb[0]) + (xb[0]**(a1[0]-a2[0])*(x**a2[0])*(x>xb[0])))) - y)**2/y)
-    reduced_chi_squared = chi_squared/dof
+        """ Plot Optimised Model over Data """
+        xx = np.linspace(x[self.time_min],x[self.time_max],10000)
+        ymod = n[0] * ((xx**a1[0])*(xx<=xb[0]) + (xb[0]**(a1[0]-a2[0])*(xx**a2[0])*(xx>xb[0])))
+        plt.plot(xx,ymod,color='black')
+
+        """ Calculate and print Chi-squared values """
+        dof = (len(x) - ndim)
+        chi_squared = np.sum(((n[0] * ((x**a1[0])*(x<=xb[0]) + (xb[0]**(a1[0]-a2[0])*(x**a2[0])*(x>xb[0])))) - y)**2/y)
+        reduced_chi_squared = chi_squared/dof
   
-    print('\nChi Squared Value = ',chi_squared)
-    print('Degrees of Freedom = ',dof)
-    print('Reduced Chi Squared Value = ',reduced_chi_squared)
+        print('\nChi Squared Value = ',chi_squared)
+        print('Degrees of Freedom = ',dof)
+        print('Reduced Chi Squared Value = ',reduced_chi_squared)
 
-    return(n,a1,xb,a2,chi_squared,dof)
+        return(n,a1,xb,a2,chi_squared,dof)
 
-################################################
-##### Doubly Broken Power Law MCMC fitting #####
-################################################
+    def pl3(self):
+        """ Takes the data from refined afterglow data and runs a Markov-Chain Monte
+        Carlo to find the parameters of the fit and plots the data. It also
+        removes any flaring if necessary """
+        x = self.time
+        y = self.rate
+        yerr = self.rateerr
 
-def pl3_mc(afterglow_file):
-    """ Takes the data from refined afterglow data and runs a Markov-Chain Monte
-    Carlo to find the parameters of the fit and plots the data. It also
-    removes any flaring if necessary """
-    time,rate,rateerr,time_min,time_max = refine_afterglow_data(afterglow_file)
-    x = time
-    y = rate
-    yerr = rateerr
+        """ Give initial parameters """
+        norm = float(input('Norm: '))
+        slope1 = float(input('First Slope: '))
+        breakpoint1 = float(input('Breakpoint: '))
+        slope2 = float(input('Second Slope: '))
+        breakpoint2 = float(input('Second Breakpoint: '))
+        slope3 = float(input('Third Slope: '))
 
-    """ Give initial parameters """
-    norm = float(input('Norm: '))
-    slope1 = float(input('First Slope: '))
-    breakpoint1 = float(input('Breakpoint: '))
-    slope2 = float(input('Second Slope: '))
-    breakpoint2 = float(input('Second Breakpoint: '))
-    slope3 = float(input('Third Slope: '))
-
-    def prior(p):
-        """ Define boundaries that the walkers should not leave """
-        n, a1, xb1, a2, xb2, a3 = p
-        if n > 0 and -7 < a1 < 1 and -7 < a2 < 1 and -7 < a3 < 1 and xb1 > 0 and xb2 > 0:
-            return 0.0
-        return -np.inf
-
-    def err_func(p, x, y, yerr):
-        """ Log-likelihood normal distribution function """
-        n, a1, xb1, a2, xb2, a3 = p
-        model = n * (((x**a1)*(x<=xb1)) + ((xb1**(a1-a2))*(x**a2)*(x>xb1)*(x<xb2)) + ((xb1**(a1-a2))*(xb2**(a2-a3))*(x**a3)*(x>=xb2)))
-        sigma = yerr
-        return -0.5*((np.sum((((y-model)/sigma)**2) + np.log(sigma**2))) + len(y)*np.log(2*np.pi))
-    
-    def prob(p, x, y, yerr):
-        """ Probability function for MCMC """
-        pr = prior(p)
-        if not np.isfinite(pr):
+        def prior(p):
+            """ Define boundaries that the walkers should not leave """
+            n, a1, xb1, a2, xb2, a3 = p
+            if n > 0 and -7 < a1 < 1 and -7 < a2 < 1 and -7 < a3 < 1 and xb1 > 0 and xb2 > 0:
+                return 0.0
             return -np.inf
-        return pr + err_func(p, x, y, yerr)
 
-    """ Set up sampler and run the MCMC. Remove burn in period and
-    flatten samples array """
-    guess = [norm,slope1,breakpoint1,slope2,breakpoint2,slope3]
-    nwalkers, ndim, nsteps = 100, 6, 10000
-    p0 = [guess+(0.01*np.random.randn(ndim)) for i in range(nwalkers)]
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, prob, args=(x, y, yerr))
+        def err_func(p, x, y, yerr):
+            """ Log-likelihood normal distribution function """
+            n, a1, xb1, a2, xb2, a3 = p
+            model = n * (((x**a1)*(x<=xb1)) + ((xb1**(a1-a2))*(x**a2)*(x>xb1)*(x<xb2)) + ((xb1**(a1-a2))*(xb2**(a2-a3))*(x**a3)*(x>=xb2)))
+            sigma = yerr
+            return -0.5*((np.sum((((y-model)/sigma)**2) + np.log(sigma**2))) + len(y)*np.log(2*np.pi))
+    
+        def prob(p, x, y, yerr):
+            """ Probability function for MCMC """
+            pr = prior(p)
+            if not np.isfinite(pr):
+                return -np.inf
+            return pr + err_func(p, x, y, yerr)
 
-    print('Running MCMC...')
-    sampler.run_mcmc(p0, nsteps)
-    print('MCMC Done!\n')
-    samples = sampler.chain[:, 50:, :].reshape((-1, ndim))
+        """ Set up sampler and run the MCMC. Remove burn in period and
+        flatten samples array """
+        guess = [norm,slope1,breakpoint1,slope2,breakpoint2,slope3]
+        nwalkers, ndim, nsteps = 100, 6, 10000
+        p0 = [guess+(0.01*np.random.randn(ndim)) for i in range(nwalkers)]
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, prob, args=(x, y, yerr))
 
-    """ Print results and uncretainties (16-84 quartile) """
-    n, a1, xb1, a2, xb2, a3 = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                             zip(*np.percentile(samples, [16, 50, 84],
-                                                axis=0)))
-    print('norm = ',n[0],'(+',n[1],'-',n[2],')')
-    print('a1 = ',a1[0],'(+',a1[1],'-',a1[2],')')
-    print('xb1 = ',xb1[0],'(+',xb1[1],'-',xb1[2],')')
-    print('a2 = ',a2[0],'(+',a2[1],'-',a2[2],')')
-    print('xb2 = ',xb2[0],'(+',xb2[1],'-',xb2[2],')')
-    print('a3 = ',a3[0],'(+',a3[1],'-',a3[2],')')
+        print('Running MCMC...')
+        sampler.run_mcmc(p0, nsteps)
+        print('MCMC Done!\n')
+        samples = sampler.chain[:, 50:, :].reshape((-1, ndim))
 
-    """ Plot Optimised Model over Data """
-    xx = np.linspace(time[time_min],time[time_max],10000)
-    ymod = n[0] * ((xx**a1[0])*(xx<=xb1[0]) + (xb1[0]**(a1[0]-a2[0])*(xx**a2[0])*(xb1[0]<xx)*(xx<xb2[0])) + ((xb1[0]**(a1[0]-a2[0]))*(xb2[0]**(a2[0]-a3[0]))*(xx**a3[0])*(xx>=xb2[0])))
-    plt.plot(xx,ymod,color='black')
+        """ Print results and uncretainties (16-84 quartile) """
+        n, a1, xb1, a2, xb2, a3 = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                                 zip(*np.percentile(samples, [16, 50, 84],axis=0)))
+        print('norm = ',n[0],'(+',n[1],'-',n[2],')')
+        print('a1 = ',a1[0],'(+',a1[1],'-',a1[2],')')
+        print('xb1 = ',xb1[0],'(+',xb1[1],'-',xb1[2],')')
+        print('a2 = ',a2[0],'(+',a2[1],'-',a2[2],')')
+        print('xb2 = ',xb2[0],'(+',xb2[1],'-',xb2[2],')')
+        print('a3 = ',a3[0],'(+',a3[1],'-',a3[2],')')
 
-    """ Calculate and print Chi-squared values """
-    dof = (len(time) - ndim)
-    chi_squared = np.sum(((n[0] * ((x**a1[0])*(x<=xb1[0]) + (xb1[0]**(a1[0]-a2[0])*(x**a2[0])*(xb1[0]<x)*(x<xb2[0])) + ((xb1[0]**(a1[0]-a2[0]))*(xb2[0]**(a2[0]-a3[0]))*(x**a3[0])*(x>=xb2[0])))) - y)**2/y)
-    reduced_chi_squared = chi_squared/dof
+        """ Plot Optimised Model over Data """
+        xx = np.linspace(x[self.time_min],x[self.time_max],10000)
+        ymod = n[0] * ((xx**a1[0])*(xx<=xb1[0]) + (xb1[0]**(a1[0]-a2[0])*(xx**a2[0])*(xb1[0]<xx)*(xx<xb2[0])) + ((xb1[0]**(a1[0]-a2[0]))*(xb2[0]**(a2[0]-a3[0]))*(xx**a3[0])*(xx>=xb2[0])))
+        plt.plot(xx,ymod,color='black')
+
+        """ Calculate and print Chi-squared values """
+        dof = (len(x) - ndim)
+        chi_squared = np.sum(((n[0] * ((x**a1[0])*(x<=xb1[0]) + (xb1[0]**(a1[0]-a2[0])*(x**a2[0])*(xb1[0]<x)*(x<xb2[0])) + ((xb1[0]**(a1[0]-a2[0]))*(xb2[0]**(a2[0]-a3[0]))*(x**a3[0])*(x>=xb2[0])))) - y)**2/y)
+        reduced_chi_squared = chi_squared/dof
   
-    print('\nChi Squared Value = ',chi_squared)
-    print('Degrees of Freedom = ',dof)
-    print('Reduced Chi Squared Value = ',reduced_chi_squared)
+        print('\nChi Squared Value = ',chi_squared)
+        print('Degrees of Freedom = ',dof)
+        print('Reduced Chi Squared Value = ',reduced_chi_squared)
 
-    return(n,a1,xb1,a2,xb2,a3,chi_squared,dof)
+        return(n,a1,xb1,a2,xb2,a3,chi_squared,dof)
 
 ##############################################
 ##### F-Test For Comparing Fitted Models #####
@@ -1305,8 +1107,3 @@ def f_test():
         print('No significant improvement in fit!')
     else:
         print('Significant improvement in fit!')
-    
-    
-    
-    
-    
